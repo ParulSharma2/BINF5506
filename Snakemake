@@ -1,13 +1,1 @@
-import os # already present in the environment therefore no need to install it
-import boto3
-# File upload starting 
 
-# Create a new S3 client
-s3 = boto3.client('s3') # library.client('s3')
-
-# Upload a file to an S3 bucket
-bucket_name = 'parul-binf5506'
-s3.upload_file('Snakemake.py', 'parul-binf5506', 'Snakemake.py') # file_name, bucket_name, key_name
-
-#File upload completed
-print(f"File Snakemake.py uploaded to bucket {bucket_name} successfully.")
