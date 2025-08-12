@@ -24,14 +24,14 @@ rule all:
         f"{QC_DIR}/{SRA}_fastqc.html",
         f"{RAW_DIR}/reference.fasta.fai",
         f"{RAW_DIR}/reference.dict",
-        f"{ALIGNED_DIR}/dedup.bam.bai",
-        f"{VARIANT_DIR}/raw_variants.vcf",
-        f"{VARIANT_DIR}/filtered_variants.vcf",
-        f"{SNPEFF_DATA_DIR}/genes.gbk",
-        f"{SNPEFF_DIR}/snpEff.config",
-        f"{SNPEFF_DIR}/snpEff_reference_db.txt",
-        f"{ANNOTATED_DIR}/annotated_variants.vcf",
-        f"{SNPEFF_DIR}/snpEff.html"
+       # f"{ALIGNED_DIR}/dedup.bam.bai",
+       # f"{VARIANT_DIR}/raw_variants.vcf",
+       # f"{VARIANT_DIR}/filtered_variants.vcf",
+       # f"{SNPEFF_DATA_DIR}/genes.gbk",
+       # f"{SNPEFF_DIR}/snpEff.config",
+       # f"{SNPEFF_DIR}/snpEff_reference_db.txt",
+       # f"{ANNOTATED_DIR}/annotated_variants.vcf",
+       # f"{SNPEFF_DIR}/snpEff.html"
 
 
 # Utility: make dirs
@@ -90,4 +90,63 @@ rule extract_fastq:
         fastq-dump -X 10000 {input} -O {RAW_DIR}
         test -s {output.fastq}
         echo "Extracted sequencing data!"
+        """
+# QC: FastQC on FASTQ
+
+rule fastqc_raw:
+    input:
+        f"{RAW_DIR}/{SRA}.fastq"
+    output:
+        html = f"{QC_DIR}/{SRA}_fastqc.html",
+        zip = f"{QC_DIR}/{SRA}_fastqc.zip"
+    shell:
+        r"""
+        echo "Running FastQC..."
+        fastqc -o {QC_DIR} {input}
+        test -s {output.html}
+        test -s {output.zip}
+        """
+
+
+# Reference indexing (faidx)
+
+rule samtools_faidx:
+    input:
+        f"{RAW_DIR}/reference.fasta"
+    output:
+        f"{RAW_DIR}/reference.fasta.fai"
+    shell:
+        r"""
+        echo "Indexing reference with samtools faidx..."
+        samtools faidx {input}
+        """
+
+
+# BWA index reference
+
+rule bwa_index:
+    input:
+        f"{RAW_DIR}/reference.fasta"
+    output:
+        # BWA creates multiple files; use a sentinel file to avoid listing them all
+        touch(f"{RAW_DIR}/.bwa_index_done")
+    shell:
+        r"""
+        echo "Building BWA index..."
+        bwa index {input}
+        touch {output}
+        """
+
+
+# GATK CreateSequenceDictionary
+
+rule gatk_dict:
+    input:
+        f"{RAW_DIR}/reference.fasta"
+    output:
+        f"{RAW_DIR}/reference.dict"
+    shell:
+        r"""
+        echo "Creating sequence dictionary..."
+        gatk CreateSequenceDictionary -R {input} -O {output}
         """
