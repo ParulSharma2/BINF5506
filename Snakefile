@@ -59,3 +59,86 @@ rule extract_sequence:
         f"{RAW_DIR}/{SRA}.fastq"
     shell:
         "fastq-dump -X 10000 {input} -O {RAW_DIR}"
+
+# Quality check report of the raw reads
+rule fastqc_raw:
+    input:
+        f"{RAW_DIR}/{SRA}.fastq"
+    output:
+        html=f"{QC_DIR}/{SRA}_fastqc.html"
+    shell:
+        "fastqc -o {QC_DIR} {input}"
+
+# Create FASTA index (.fai) used by samtools/gatk
+rule samtools_faidx:
+    input:
+        f"{RAW_DIR}/reference.fasta"
+    output:
+        f"{RAW_DIR}/reference.fasta.fai"
+    shell:
+        "samtools faidx {input}"
+
+# Build BWA index files (.amb/.ann/.bwt/.pac/.sa)
+rule bwa_index:
+    input:
+        f"{RAW_DIR}/reference.fasta"
+    output:
+        expand("{ref}.{ext}", ref=f"{RAW_DIR}/reference.fasta", ext=["amb","ann","bwt","pac","sa"])
+    shell:
+        "bwa index {input}"
+
+# Create a sequence dictionary (.dict) required by GATK
+rule gatk_dict:
+    input:
+        f"{RAW_DIR}/reference.fasta"
+    output:
+        f"{RAW_DIR}/reference.dict"
+    shell:
+        "gatk CreateSequenceDictionary -R {input} -O {output}"
+
+# Align reads and embed read-group info (required by many GATK tools)
+rule bwa_mem:
+    input:
+        ref=f"{RAW_DIR}/reference.fasta",
+        fq =f"{RAW_DIR}/{SRA}.fastq"
+    output:
+        f"{ALIGNED_DIR}/aligned.sam"
+    shell:
+        r"""bwa mem -R '@RG\tID:1\tLB:lib1\tPL:illumina\tPU:unit1\tSM:sample1' {input.ref} {input.fq} > {output}"""
+
+# Convert SAM to BAM and coordinate-sort
+rule sort_bam:
+    input:
+        f"{ALIGNED_DIR}/aligned.sam"
+    output:
+        f"{ALIGNED_DIR}/aligned.sorted.bam"
+    shell:
+        "samtools view -b {input} | samtools sort -o {output}"
+
+# Sanity check (summary) to catch malformed BAMs early
+rule validate_bam:
+    input:
+        f"{ALIGNED_DIR}/aligned.sorted.bam"
+    output:
+        f"{ALIGNED_DIR}/validated.txt"
+    shell:
+        "gatk ValidateSamFile -I {input} -MODE SUMMARY > {output}"
+
+# Mark duplicates (PCR/optical dups), produce metrics
+rule mark_duplicates:
+    input:
+        f"{ALIGNED_DIR}/aligned.sorted.bam"
+    output:
+        bam    = f"{ALIGNED_DIR}/dedup.bam",
+        metrics= f"{ALIGNED_DIR}/dup_metrics.txt"
+    shell:
+        "gatk MarkDuplicates -I {input} -O {output.bam} -M {output.metrics}"
+
+# Make BAM index (.bai) to enables random access for tools like IGV/GATK
+rule index_dedup:
+    input:
+        f"{ALIGNED_DIR}/dedup.bam"
+    output:
+        f"{ALIGNED_DIR}/dedup.bam.bai"
+    shell:
+        "samtools index {input}"
