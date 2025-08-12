@@ -30,7 +30,8 @@ rule create_dirs:
         """
         mkdir -p {RESULTS_FOLDER} {RAW_DIR} {ALIGNED_DIR} {VARIANT_DIR} {ANNOTATED_DIR} {QC_DIR} {SNPEFF_DATA_DIR} {SNAKEMAKE_DIR}
         touch {SNAKEMAKE_DIR}/.dirs_created
-        """
+       """
+# Download reference as FASTA with NCBI Entrez Direct
 rule download_reference:
     input:
         f"{SNAKEMAKE_DIR}/.dirs_created"
@@ -39,7 +40,6 @@ rule download_reference:
     shell:
         """
         efetch -db nucleotide -id {REF_ID} -format fasta > {output.fasta}
-        test -s {output.fasta}
         """
 
 rule download_sra:
