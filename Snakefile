@@ -142,3 +142,65 @@ rule index_dedup:
         f"{ALIGNED_DIR}/dedup.bam.bai"
     shell:
         "samtools index {input}"
+# Call variants with GATK HaplotypeCaller
+rule call_variants:
+    input:
+        ref=f"{RAW_DIR}/reference.fasta",
+        bam=f"{ALIGNED_DIR}/dedup.bam"
+    output:
+        f"{VARIANT_DIR}/raw_variants.vcf"
+    shell:
+        "gatk HaplotypeCaller -R {input.ref} -I {input.bam} -O {output}"
+
+# Apply simple filters (quality/depth/strand bias); tune as needed
+rule filter_variants:
+    input:
+        ref=f"{RAW_DIR}/reference.fasta",
+        vcf=f"{VARIANT_DIR}/raw_variants.vcf"
+    output:
+        f"{VARIANT_DIR}/filtered_variants.vcf"
+    shell:
+        'gatk VariantFiltration -R {input.ref} -V {input.vcf} -O {output} --filter-expression "QD < 2.0 || FS > 60.0" --filter-name FILTER'
+
+# Download GenBank to build a tiny snpEff DB for this reference
+rule snpeff_genbank:
+    input:
+        f"{RAW_DIR}/reference.fasta"
+    output:
+        f"{SNPEFF_DATA_DIR}/genes.gbk"
+    shell:
+        "efetch -db nucleotide -id {REF_ID} -format genbank > {output}"
+
+# Create a custom snpEff config that points to your local FASTA/GenBank
+rule snpeff_config:
+    input:
+        fasta=f"{RAW_DIR}/reference.fasta",
+        gb   =f"{SNPEFF_DATA_DIR}/genes.gbk"
+    output:
+        f"{SNPEFF_DIR}/snpEff.config"
+    shell:
+        r'''cat > {output} <<EOF
+reference_db.genome : reference_db
+reference_db.fa : {input.fasta}
+reference_db.genbank : {input.gb}
+EOF'''
+
+# Build the snpEff database (one-time); we touch a marker so Snakemake can track it
+rule snpeff_build:
+    input:
+        f"{SNPEFF_DIR}/snpEff.config"
+    output:
+        touch(f"{SNPEFF_DIR}/.built")
+    shell:
+        "snpEff build -c {input} -genbank -v -noCheckProtein reference_db && touch {output}"
+
+# Annotate VCF with snpEff; also gives an HTML report
+rule snpeff_annotate:
+    input:
+        cfg  = f"{SNPEFF_DIR}/snpEff.config",
+        vcf  = f"{VARIANT_DIR}/filtered_variants.vcf",
+        built= f"{SNPEFF_DIR}/.built"
+    output:
+        f"{ANNOTATED_DIR}/annotated_variants.vcf"
+    shell:
+        "snpEff -c {input.cfg} -stats {SNPEFF_DIR}/snpEff.html reference_db {input.vcf} > {output}"
