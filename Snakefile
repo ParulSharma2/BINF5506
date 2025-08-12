@@ -44,3 +44,50 @@ rule create_dirs:
         mkdir -p {RESULTS_FOLDER} {RAW_DIR} {ALIGNED_DIR} {VARIANT_DIR} {ANNOTATED_DIR} {QC_DIR} {SNPEFF_DATA_DIR} {SNAKEMAKE_DIR}
         touch {output.marker}
         """
+# Data Downloading
+# Reference: FASTA file
+
+rule download_reference:
+    input:
+        rules.create_dirs.output.marker
+    output:
+        reference_fasta = f"{RAW_DIR}/reference.fasta"
+    shell:
+        r"""
+        echo "Downloading reference genome..."
+        efetch -db nucleotide -id {REF_ID} -format fasta > {output.reference_fasta}
+        test -s {output.reference_fasta}
+        echo "Downloaded reference genome!"
+        """
+
+
+# SRA: download SRA
+
+rule download_sra:
+    input:
+        rules.create_dirs.output.marker
+    output:
+        sra = f"{RAW_DIR}/{SRA}/{SRA}.sra"
+    shell:
+        r"""
+        echo "Downloading sequencing data..."
+        prefetch {SRA} -O {RAW_DIR}
+        test -s {output.sra}
+        echo "Downloaded sequencing data!"
+        """
+
+
+# SRA: extract to FASTQ
+
+rule extract_fastq:
+    input:
+        rules.download_sra.output.sra
+    output:
+        fastq = f"{RAW_DIR}/{SRA}.fastq"
+    shell:
+        r"""
+        echo "Extracting sequencing data..."
+        fastq-dump -X 10000 {input} -O {RAW_DIR}
+        test -s {output.fastq}
+        echo "Extracted sequencing data!"
+        """
