@@ -229,3 +229,115 @@ rule index_dedup_bam:
         echo "Indexing deduplicated BAM..."
         samtools index {input}
         """
+# Call variants (HCaller)
+
+rule haplotype_caller:
+    input:
+        ref = f"{RAW_DIR}/reference.fasta",
+        bai = f"{ALIGNED_DIR}/dedup.bam.bai"
+    output:
+        vcf = f"{VARIANT_DIR}/raw_variants.vcf"
+    shell:
+        r"""
+        echo "Calling variants with GATK HaplotypeCaller..."
+        gatk HaplotypeCaller -R {input.ref} -I {ALIGNED_DIR}/dedup.bam -O {output.vcf}
+        test -s {output.vcf}
+        """
+
+
+# Filter variants (GATK VFilt)
+
+rule filter_variants:
+    input:
+        ref = f"{RAW_DIR}/reference.fasta",
+        vcf = f"{VARIANT_DIR}/raw_variants.vcf"
+    output:
+        f"{VARIANT_DIR}/filtered_variants.vcf"
+    shell:
+        r"""
+        echo "Filtering variants..."
+        gatk VariantFiltration -R {input.ref} -V {input.vcf} -O {output} \
+            --filter-expression "QD < 2.0 || FS > 60.0" --filter-name FILTER
+        test -s {output}
+        """
+
+# snpEff: download GenBank for custom DB
+
+rule snpeff_fetch_gbk:
+    input:
+        rules.create_dirs.output.marker
+    output:
+        gbk = f"{SNPEFF_DATA_DIR}/genes.gbk"
+    shell:
+        r"""
+        echo "Downloading reference GenBank file for snpeff..."
+        efetch -db nucleotide -id {REF_ID} -format genbank > {output.gbk}
+        test -s {output.gbk}
+        echo "Downloaded GenBank file for snpeff!"
+        """
+
+# snpEff: write minimal config
+
+rule snpeff_write_config:
+    input:
+        ref = f"{RAW_DIR}/reference.fasta",
+        gbk = f"{SNPEFF_DATA_DIR}/genes.gbk"
+    output:
+        cfg = f"{SNPEFF_DIR}/snpeff.config"
+    shell:
+        r"""
+        echo "Creating custom snpeff configuration file..."
+        mkdir -p {SNPEFF_DIR}
+        cat > {output.cfg} <<EOF
+# Custom snpeff config for reference_db
+reference_db.genome : reference_db
+reference_db.fa : {input.ref}
+reference_db.genbank : {input.gbk}
+EOF
+        test -s {output.cfg}
+        """
+
+# snpEff: build custom database
+rule snpeff_build_db:
+    input:
+        cfg = f"{SNPEFF_DIR}/snpEff.config"
+    output:
+        touch(f"{SNPEFF_DIR}/.snpeff_build_done")
+    shell:
+        r"""
+        echo "Building snpEff database..."
+        snpEff build -c {input.cfg} -genbank -v -noCheckProtein reference_db
+        touch {output}
+        """
+
+# snpEff: dump (export)
+rule snpeff_dump_db:
+    input:
+        cfg = f"{SNPEFF_DIR}/snpEff.config",
+        built = f"{SNPEFF_DIR}/.snpeff_build_done"
+    output:
+        dump = f"{SNPEFF_DIR}/snpEff_reference_db.txt"
+    shell:
+        r"""
+        echo "Exporting snpEff database..."
+        snpEff dump -c {input.cfg} reference_db > {output.dump}
+        test -s {output.dump}
+        """
+
+# snpEff: annotate VCF
+rule snpeff_annotate:
+    input:
+        cfg = f"{SNPEFF_DIR}/snpEff.config",
+        vcf = f"{VARIANT_DIR}/filtered_variants.vcf",
+        built = f"{SNPEFF_DIR}/.snpeff_build_done"
+    output:
+        anno_vcf = f"{ANNOTATED_DIR}/annotated_variants.vcf",
+        html = f"{SNPEFF_DIR}/snpEff.html"
+    shell:
+        r"""
+        echo "Annotating variants with snpEff..."
+        snpEff -c {input.cfg} -stats {output.html} reference_db {input.vcf} > {output.anno_vcf}
+        test -s {output.anno_vcf}
+        test -s {output.html}
+        echo "Annotation complete!"
+        """
