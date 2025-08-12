@@ -96,7 +96,7 @@ rule gatk_dict:
     shell:
         "gatk CreateSequenceDictionary -R {input} -O {output}"
 
-# Align reads and embed read-group info (required by many GATK tools)
+# Align reads and read-group info (required by many GATK tools)
 rule bwa_mem:
     input:
         ref=f"{RAW_DIR}/reference.fasta",
