@@ -13,6 +13,10 @@ SNPEFF_DATA_DIR = f"{SNPEFF_DIR}/data/reference_db"
 SNAKEMAKE_DIR = f"{RESULTS_FOLDER}/snakemake"
 
 
+# S3 Bucket for data storage
+BUCKET = "parul-binf5506"
+S3_PREFIX = "ebola"
+
 # Final target(s)
 
 rule all:
@@ -25,14 +29,14 @@ rule all:
         f"{RAW_DIR}/reference.fasta.fai",
         f"{RAW_DIR}/reference.dict",
         f"{ALIGNED_DIR}/dedup.bam.bai",
-       # f"{VARIANT_DIR}/raw_variants.vcf",
-       # f"{VARIANT_DIR}/filtered_variants.vcf",
-       # f"{SNPEFF_DATA_DIR}/genes.gbk",
-       # f"{SNPEFF_DIR}/snpEff.config",
-       # f"{SNPEFF_DIR}/snpEff_reference_db.txt",
-       # f"{ANNOTATED_DIR}/annotated_variants.vcf",
-       # f"{SNPEFF_DIR}/snpEff.html"
-
+        f"{VARIANT_DIR}/raw_variants.vcf",
+        f"{VARIANT_DIR}/filtered_variants.vcf",
+        f"{SNPEFF_DATA_DIR}/genes.gbk",
+        f"{SNPEFF_DIR}/snpEff.config",
+        f"{SNPEFF_DIR}/snpEff_reference_db.txt",
+        f"{ANNOTATED_DIR}/annotated_variants.vcf",
+        f"{SNPEFF_DIR}/snpEff.html",
+        f"{SNAKEMAKE_DIR}/.s3_upload_done" 
 
 # Utility: make dirs
 
@@ -270,10 +274,10 @@ rule snpeff_fetch_gbk:
         gbk = f"{SNPEFF_DATA_DIR}/genes.gbk"
     shell:
         r"""
-        echo "Downloading reference GenBank file for snpeff..."
+        echo "Downloading reference GenBank file for snpEff..."
         efetch -db nucleotide -id {REF_ID} -format genbank > {output.gbk}
         test -s {output.gbk}
-        echo "Downloaded GenBank file for snpeff!"
+        echo "Downloaded GenBank file for snpEff!"
         """
 
 # snpEff: write minimal config
@@ -283,13 +287,13 @@ rule snpeff_write_config:
         ref = f"{RAW_DIR}/reference.fasta",
         gbk = f"{SNPEFF_DATA_DIR}/genes.gbk"
     output:
-        cfg = f"{SNPEFF_DIR}/snpeff.config"
+        cfg = f"{SNPEFF_DIR}/snpEff.config"
     shell:
         r"""
-        echo "Creating custom snpeff configuration file..."
+        echo "Creating custom snpEff configuration file..."
         mkdir -p {SNPEFF_DIR}
         cat > {output.cfg} <<EOF
-# Custom snpeff config for reference_db
+# Custom snpEff config for reference_db
 reference_db.genome : reference_db
 reference_db.fa : {input.ref}
 reference_db.genbank : {input.gbk}
@@ -341,3 +345,40 @@ rule snpeff_annotate:
         test -s {output.html}
         echo "Annotation complete!"
         """
+
+# FINAL STEP: Upload to S3
+
+rule s3_upload:
+    input:
+        # Depend on end-of-pipeline outputs so this runs last
+        rules.fastqc_raw.output.html,
+        rules.samtools_faidx.output,
+        rules.gatk_dict.output,
+        rules.index_dedup_bam.output,
+        rules.filter_variants.output,
+        rules.snpeff_annotate.output.anno_vcf,
+        rules.snpeff_annotate.output.html
+    output:
+        marker = f"{SNAKEMAKE_DIR}/.s3_upload_done"
+    run:
+        import os
+        import boto3
+
+        bucket = BUCKET
+        prefix = S3_PREFIX.strip("/")
+
+        s3 = boto3.client("s3")
+        for root, dirs, files in os.walk(RESULTS_FOLDER):
+            for file in files:
+                local_file = os.path.join(root, file)
+                # avoid uploading the marker before it's written
+                if os.path.abspath(local_file) == os.path.abspath(output.marker):
+                    continue
+                rel = os.path.relpath(local_file, RESULTS_FOLDER)
+                s3_key = os.path.join(prefix, rel).replace("\\", "/")
+                print(f"Uploading {local_file} -> s3://{bucket}/{s3_key}")
+                s3.upload_file(local_file, bucket, s3_key)
+
+        with open(output.marker, "w") as f:
+            f.write("Upload Complete!\n")
+        print("All files uploaded to S3.")
